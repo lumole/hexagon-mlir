@@ -141,6 +141,12 @@ class HexagonExecutor:
         self.exec_mode = get_exec_mode() if not compile_only else "compile_only"
         self.device_path = f"/data/local/tmp/{kernel_run_id}"
         self.lib_path = f"{self.device_path}/lib"
+        # Directory on the device where the FastRPC loader files (run_main_on_hexagon
+        # skel, libc++, .farf marker) are placed.  Production (non-rooted) devices do
+        # not allow writing to /vendor/lib/rfsa/adsp, so default to a writable
+        # location and let FastRPC find the files through ADSP_LIBRARY_PATH.
+        self.rfsa_dir = os.environ.get("TRITON_DEVICE_RFSA_DIR",
+                                       "/data/local/tmp/triton_rfsa")
         self.alt_perf_path = (
             perf_path  # Only needed in contexts where the .cpp wrapper is hardcoded
         )
@@ -596,19 +602,21 @@ class HexagonExecutor:
             ),
             # Create base directory for this kernel's execution on device
             (
-                "adb {} -s {} shell 'mkdir -p {}'".format(
+                "adb {} -s {} shell 'mkdir -p {} {}'".format(
                     self.config.env_vars["ANDROID_HOST"],
                     self.config.env_vars["ANDROID_SERIAL"],
                     self.device_path,
+                    self.rfsa_dir,
                 ),
                 True,
             ),
             # Create dynamic library directory for this kernel's execution on device
             (
-                "adb {} -s {} shell 'mkdir -p {}'".format(
+                "adb {} -s {} shell 'mkdir -p {} {}'".format(
                     self.config.env_vars["ANDROID_HOST"],
                     self.config.env_vars["ANDROID_SERIAL"],
                     self.lib_path,
+                    self.rfsa_dir,
                 ),
                 True,
             ),
@@ -616,7 +624,7 @@ class HexagonExecutor:
             # CDSP search directory. Some devices do not search the per-run
             # ADSP_LIBRARY_PATH for these files.
             (
-                "adb {} -s {} push {} /vendor/lib/rfsa/adsp".format(
+                "adb {} -s {} push {} {}".format(
                     self.config.env_vars["ANDROID_HOST"],
                     self.config.env_vars["ANDROID_SERIAL"],
                     " ".join(
@@ -627,6 +635,7 @@ class HexagonExecutor:
                             libcppabi_path,
                         ]
                     ),
+                    self.rfsa_dir,
                 ),
                 True,
             ),
@@ -689,12 +698,14 @@ class HexagonExecutor:
             ),
             # Run the kernel using run_main_on_hexagon
             (
-                "adb {} -s {} shell 'cd {}; touch /vendor/lib/rfsa/adsp/run_main_on_hexagon.farf; export DSP_LIBRARY_PATH={}; export ADSP_LIBRARY_PATH=\"{};/vendor/lib/rfsa/adsp/\" ; ./run_main_on_hexagon 3 {}'".format(
+                "adb {} -s {} shell 'cd {}; touch {}/run_main_on_hexagon.farf; export DSP_LIBRARY_PATH={}; export ADSP_LIBRARY_PATH=\"{};{}\" ; ./run_main_on_hexagon 3 {}'".format(
                     self.config.env_vars["ANDROID_HOST"],
                     self.config.env_vars["ANDROID_SERIAL"],
                     self.device_path,
+                    self.rfsa_dir,
                     self.lib_path,
                     self.lib_path,
+                    self.rfsa_dir,
                     path_to_principal_lib_on_device,
                 ),
                 True,
